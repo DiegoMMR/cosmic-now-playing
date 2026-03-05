@@ -1,3 +1,5 @@
+mod metadata;
+mod player;
 mod window;
 
 // Import the applet model (Window)

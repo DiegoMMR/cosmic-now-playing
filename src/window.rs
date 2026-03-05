@@ -13,12 +13,15 @@ use cosmic::iced::{
     Subscription,
 };
 use cosmic::iced_core::text::{Ellipsize, EllipsizeHeightLimit, Wrapping};
-use mpris::{Event as MprisEvent, PlaybackStatus, PlayerFinder};
+use mpris::{Event as MprisEvent, PlayerFinder};
 use cosmic::iced_runtime::core::window;
 use cosmic::{Action, Element, Task};
 
 // Widgets we're going to use
 use cosmic::widget::{button, column, icon, text, Row};
+
+use crate::metadata::{now_playing_from_player, now_playing_snapshot, NowPlayingData};
+use crate::player::{album_art_path_from_metadata, playback_state_from_player, with_active_player};
 
 // Every COSMIC Application and Applet MUST have an ID
 const ID: &str = "com.example.BasicApplet";
@@ -57,13 +60,7 @@ pub enum PlaybackState {
 pub enum Message {
     TogglePopup,         // Mandatory for open and close the applet
     PopupClosed(Id),     // Mandatory for the applet to know if it's been closed
-    NowPlayingChanged {
-        text: String,
-        title: String,
-        artist: String,
-        state: PlaybackState,
-        album_art_path: Option<PathBuf>,
-    },
+    NowPlayingChanged(NowPlayingData),
     PreviousTrack,
     TogglePlayPause,
     NextTrack,
@@ -98,16 +95,15 @@ impl cosmic::Application for Window {
      *  in this case there is no command so it returns a None value with the type of Task in its place.
      */
     fn init(core: Core, _flags: Self::Flags) -> (Self, Task<Action<Self::Message>>) {
-        let (initial_text, initial_title, initial_artist, initial_state, initial_art) =
-            now_playing_snapshot();
+        let initial = now_playing_snapshot();
 
         let window = Window {
             core,                 // Set the incoming core
-            now_playing_text: initial_text,
-            now_playing_title: initial_title,
-            now_playing_artist: initial_artist,
-            playback_state: initial_state,
-            album_art_path: initial_art,
+            now_playing_text: initial.text,
+            now_playing_title: initial.title,
+            now_playing_artist: initial.artist,
+            playback_state: initial.state,
+            album_art_path: initial.album_art_path,
             ..Default::default()  // Set everything else to the default values
         };
 
@@ -144,8 +140,8 @@ impl cosmic::Application for Window {
                     );
 
                     popup_settings.positioner.size_limits = Limits::NONE
-                        .max_width(372.0)
-                        .min_width(300.0)
+                        .max_width(370.0)
+                        .min_width(200.0)
                         .min_height(200.0)
                         .max_height(1080.0);
 
@@ -158,18 +154,12 @@ impl cosmic::Application for Window {
                     self.popup = None;
                 }
             }
-            Message::NowPlayingChanged {
-                text,
-                title,
-                artist,
-                state,
-                album_art_path,
-            } => {
-                self.now_playing_text = text;
-                self.now_playing_title = title;
-                self.now_playing_artist = artist;
-                self.playback_state = state;
-                self.album_art_path = album_art_path;
+            Message::NowPlayingChanged(data) => {
+                self.now_playing_text = data.text;
+                self.now_playing_title = data.title;
+                self.now_playing_artist = data.artist;
+                self.playback_state = data.state;
+                self.album_art_path = data.album_art_path;
             }
             Message::PreviousTrack => {
                 with_active_player(|player| {
@@ -217,13 +207,13 @@ impl cosmic::Application for Window {
                                     last_state = PlaybackState::Stopped;
                                     last_art = None;
                                     while output
-                                        .try_send(Message::NowPlayingChanged {
+                                        .try_send(Message::NowPlayingChanged(NowPlayingData {
                                             text: last_sent.clone(),
                                             title: "Nothing playing".to_string(),
                                             artist: String::new(),
                                             state: last_state,
                                             album_art_path: None,
-                                        })
+                                        }))
                                         .is_err()
                                     {
                                         std::thread::sleep(Duration::from_millis(10));
@@ -235,20 +225,15 @@ impl cosmic::Application for Window {
                             }
                         };
 
-                        let (current, current_title, current_artist, current_state, current_art) =
-                            now_playing_from_player(&player);
-                        if current != last_sent || current_state != last_state || current_art != last_art {
-                            last_sent = current.clone();
+                        let current = now_playing_from_player(&player);
+                        let current_state = current.state;
+                        let current_art = current.album_art_path.clone();
+                        if current.text != last_sent || current_state != last_state || current_art != last_art {
+                            last_sent = current.text.clone();
                             last_state = current_state;
                             last_art = current_art.clone();
                             while output
-                                .try_send(Message::NowPlayingChanged {
-                                    text: current.clone(),
-                                    title: current_title.clone(),
-                                    artist: current_artist.clone(),
-                                    state: current_state,
-                                    album_art_path: current_art.clone(),
-                                })
+                                .try_send(Message::NowPlayingChanged(current.clone()))
                                 .is_err()
                             {
                                 std::thread::sleep(Duration::from_millis(10));
@@ -280,13 +265,13 @@ impl cosmic::Application for Window {
                                         last_state = state;
                                         last_art = art.clone();
                                         while output
-                                            .try_send(Message::NowPlayingChanged {
+                                            .try_send(Message::NowPlayingChanged(NowPlayingData {
                                                 text: text.clone(),
                                                 title: title.to_string(),
                                                 artist: artist.to_string(),
                                                 state,
                                                 album_art_path: art.clone(),
-                                            })
+                                            }))
                                             .is_err()
                                         {
                                             std::thread::sleep(Duration::from_millis(10));
@@ -296,20 +281,17 @@ impl cosmic::Application for Window {
                                 Ok(MprisEvent::Playing)
                                 | Ok(MprisEvent::Paused)
                                 | Ok(MprisEvent::Stopped) => {
-                                    let (text, title, artist, state, art) = now_playing_from_player(&player);
+                                    let data = now_playing_from_player(&player);
+                                    let text = data.text.clone();
+                                    let state = data.state;
+                                    let art = data.album_art_path.clone();
 
                                     if text != last_sent || state != last_state || art != last_art {
-                                        last_sent = text.clone();
+                                        last_sent = text;
                                         last_state = state;
                                         last_art = art.clone();
                                         while output
-                                            .try_send(Message::NowPlayingChanged {
-                                                text: text.clone(),
-                                                title: title.clone(),
-                                                artist: artist.clone(),
-                                                state,
-                                                album_art_path: art.clone(),
-                                            })
+                                            .try_send(Message::NowPlayingChanged(data.clone()))
                                             .is_err()
                                         {
                                             std::thread::sleep(Duration::from_millis(10));
@@ -443,78 +425,4 @@ impl cosmic::Application for Window {
         // Set the widget content list as the popup_container for the applet
         self.core.applet.popup_container(content_list).into()
     }  
-}
-
-fn now_playing_snapshot() -> (String, String, String, PlaybackState, Option<PathBuf>) {
-    let finder = PlayerFinder::new();
-
-    if let Ok(finder) = finder {
-        if let Ok(player) = finder.find_active() {
-            return now_playing_from_player(&player);
-        }
-    }
-
-    (
-        "Nothing playing".to_string(),
-        "Nothing playing".to_string(),
-        String::new(),
-        PlaybackState::Stopped,
-        None,
-    )
-}
-
-fn now_playing_from_player(
-    player: &mpris::Player,
-) -> (String, String, String, PlaybackState, Option<PathBuf>) {
-    let playback_state = playback_state_from_player(player);
-
-    if let Ok(meta) = player.get_metadata() {
-        let title = meta.title().unwrap_or("Unknown");
-        let artist = meta
-            .artists()
-            .and_then(|a| a.first().copied())
-            .unwrap_or("Unknown");
-        let album_art_path = album_art_path_from_metadata(&meta);
-
-        return (
-            format!("{} - {}", title, artist),
-            title.to_string(),
-            artist.to_string(),
-            playback_state,
-            album_art_path,
-        );
-    }
-
-    (
-        "Nothing playing".to_string(),
-        "Nothing playing".to_string(),
-        String::new(),
-        playback_state,
-        None,
-    )
-}
-
-fn playback_state_from_player(player: &mpris::Player) -> PlaybackState {
-    match player.get_playback_status() {
-        Ok(PlaybackStatus::Playing) => PlaybackState::Playing,
-        Ok(PlaybackStatus::Paused) => PlaybackState::Paused,
-        Ok(PlaybackStatus::Stopped) => PlaybackState::Stopped,
-        Err(_) => PlaybackState::Unknown,
-    }
-}
-
-fn album_art_path_from_metadata(meta: &mpris::Metadata) -> Option<PathBuf> {
-    let art_url = meta.art_url()?;
-    art_url.strip_prefix("file://").map(PathBuf::from)
-}
-
-fn with_active_player<F>(f: F)
-where
-    F: FnOnce(&mpris::Player),
-{
-    if let Ok(finder) = PlayerFinder::new() {
-        if let Ok(player) = finder.find_active() {
-            f(&player);
-        }
-    }
 }
