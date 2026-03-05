@@ -1,13 +1,17 @@
 // Mandatory COSMIC imports
+use std::time::Duration;
+
 use cosmic::app::Core;
 use cosmic::iced::{
     platform_specific::shell::commands::popup::{destroy_popup, get_popup},
+    stream::channel,
     window::Id,
     Length,
     Limits,
+    Subscription,
 };
 use cosmic::iced_core::text::{Ellipsize, EllipsizeHeightLimit, Wrapping};
-use mpris::PlayerFinder;
+use mpris::{Event as MprisEvent, PlayerFinder};
 use cosmic::iced_runtime::core::window;
 use cosmic::{Action, Element, Task};
 
@@ -32,6 +36,7 @@ pub struct Window {
     core: Core,
     popup: Option<Id>,
     is_enabled: bool,
+    now_playing_text: String,
 }
 
 #[derive(Clone, Debug)]
@@ -39,6 +44,7 @@ pub enum Message {
     TogglePopup,         // Mandatory for open and close the applet
     PopupClosed(Id),     // Mandatory for the applet to know if it's been closed
     EnableDisable(bool), // Our custom message to update the isEnabled field on the model
+    NowPlayingChanged(String),
 }
 
 impl cosmic::Application for Window {
@@ -73,6 +79,7 @@ impl cosmic::Application for Window {
         let window = Window {
             core,                 // Set the incoming core
             is_enabled: false,    // Set out isEnabled field to false to start disabled
+            now_playing_text: now_playing(),
             ..Default::default()  // Set everything else to the default values
         };
 
@@ -124,8 +131,111 @@ impl cosmic::Application for Window {
                 }
             }
             Message::EnableDisable(is_enabled) => self.is_enabled = is_enabled,
+            Message::NowPlayingChanged(text) => self.now_playing_text = text,
         }
         Task::none() // Again not doing anything that requires multi-threading here.
+    }
+
+    fn subscription(&self) -> Subscription<Self::Message> {
+        Subscription::run(|| {
+            channel(
+                64,
+                |mut output: cosmic::iced::futures::channel::mpsc::Sender<Message>| async move {
+                std::thread::spawn(move || {
+                    let mut last_sent = String::new();
+
+                    loop {
+                        let finder = match PlayerFinder::new() {
+                            Ok(finder) => finder,
+                            Err(_) => {
+                                std::thread::sleep(Duration::from_millis(1000));
+                                continue;
+                            }
+                        };
+
+                        let player = match finder.find_active() {
+                            Ok(player) => player,
+                            Err(_) => {
+                                if last_sent != "Nothing playing" {
+                                    last_sent = "Nothing playing".to_string();
+                                    while output
+                                        .try_send(Message::NowPlayingChanged(last_sent.clone()))
+                                        .is_err()
+                                    {
+                                        std::thread::sleep(Duration::from_millis(10));
+                                    }
+                                }
+
+                                std::thread::sleep(Duration::from_millis(1000));
+                                continue;
+                            }
+                        };
+
+                        let current = now_playing_from_player(&player);
+                        if current != last_sent {
+                            last_sent = current.clone();
+                            while output
+                                .try_send(Message::NowPlayingChanged(current.clone()))
+                                .is_err()
+                            {
+                                std::thread::sleep(Duration::from_millis(10));
+                            }
+                        }
+
+                        let mut events = match player.events() {
+                            Ok(events) => events,
+                            Err(_) => {
+                                std::thread::sleep(Duration::from_millis(300));
+                                continue;
+                            }
+                        };
+
+                        for event in &mut events {
+                            match event {
+                                Ok(MprisEvent::TrackChanged(metadata)) => {
+                                    let title = metadata.title().unwrap_or("Unknown");
+                                    let artist = metadata
+                                        .artists()
+                                        .and_then(|a| a.first().copied())
+                                        .unwrap_or("Unknown");
+                                    let text = format!("{} - {}", title, artist);
+
+                                    if text != last_sent {
+                                        last_sent = text.clone();
+                                        while output
+                                            .try_send(Message::NowPlayingChanged(text.clone()))
+                                            .is_err()
+                                        {
+                                            std::thread::sleep(Duration::from_millis(10));
+                                        }
+                                    }
+                                }
+                                Ok(MprisEvent::Playing)
+                                | Ok(MprisEvent::Paused)
+                                | Ok(MprisEvent::Stopped) => {
+                                    let text = now_playing_from_player(&player);
+
+                                    if text != last_sent {
+                                        last_sent = text.clone();
+                                        while output
+                                            .try_send(Message::NowPlayingChanged(text.clone()))
+                                            .is_err()
+                                        {
+                                            std::thread::sleep(Duration::from_millis(10));
+                                        }
+                                    }
+                                }
+                                Ok(MprisEvent::PlayerShutDown) | Err(_) => break,
+                                _ => {}
+                            }
+                        }
+
+                        std::thread::sleep(Duration::from_millis(200));
+                    }
+                });
+                },
+            )
+        })
     }
 
     /*
@@ -137,16 +247,14 @@ impl cosmic::Application for Window {
         let size = self.core.applet.suggested_size(true);
         let pad = self.core.applet.suggested_padding(true);
 
-        let now_playing = now_playing();
-
         let row_content = Row::new()
             .spacing(pad.0)
             .align_y(cosmic::iced::alignment::Vertical::Center)
             .push(icon::from_name("audio-x-generic-symbolic"))
             .push(
-                text(now_playing)
+                text(self.now_playing_text.as_str())
                     .size(size.0)
-                    .width(Length::Fixed(260.0))
+                    .width(Length::Fixed(300.0))
                     .wrapping(Wrapping::None)
                     .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1))),
             );
@@ -186,21 +294,28 @@ impl cosmic::Application for Window {
     }  
 }
 
-  fn now_playing() -> String {
-        let finder = PlayerFinder::new();
+fn now_playing() -> String {
+    let finder = PlayerFinder::new();
 
-        if let Ok(finder) = finder {
-            if let Ok(player) = finder.find_active() {
-                if let Ok(meta) = player.get_metadata() {
-                    let title = meta.title().unwrap_or("Unknown");
-                    let artist = meta.artists()
-                        .and_then(|a| a.first().copied())
-                        .unwrap_or("Unknown");
-
-                    return format!("{} - {}", artist, title);
-                }
-            }
+    if let Ok(finder) = finder {
+        if let Ok(player) = finder.find_active() {
+            return now_playing_from_player(&player);
         }
-
-        "Nothing playing".to_string()
     }
+
+    "Nothing playing".to_string()
+}
+
+fn now_playing_from_player(player: &mpris::Player) -> String {
+    if let Ok(meta) = player.get_metadata() {
+        let title = meta.title().unwrap_or("Unknown");
+        let artist = meta
+            .artists()
+            .and_then(|a| a.first().copied())
+            .unwrap_or("Unknown");
+
+        return format!("{} - {}", title, artist);
+    }
+
+    "Nothing playing".to_string()
+}
