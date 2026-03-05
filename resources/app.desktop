@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Now Playing
+Comment=Display currently playing media
+Type=Application
+Exec=/usr/bin/cosmic-now-playing
+Icon=multimedia-player-symbolic
+Terminal=false
+Categories=COSMIC;
+NoDisplay=true
+X-CosmicApplet=true
+X-CosmicShrinkable=true

@@ -1,0 +1,12 @@
+[package]
+name = "cosmic-now-playing"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mpris = "2.0"
+
+[dependencies.libcosmic]
+git = "https://github.com/pop-os/libcosmic.git"
+default-features = false
+features = ["applet", "wayland"]
