@@ -317,6 +317,14 @@ impl cosmic::Application for Window {
      *  opened.
      */
     fn view(&self) -> Element<'_, Message> {
+        if !self.has_active_media() {
+            return self
+                .core
+                .applet
+                .autosize_window(text(""))
+                .into();
+        }
+
         let size = self.core.applet.suggested_size(true);
         let pad = self.core.applet.suggested_padding(true);
         let transport_icon = match self.playback_state {
@@ -351,6 +359,10 @@ impl cosmic::Application for Window {
 
     // The actual GUI window for the applet. It's a popup.
     fn view_window(&self, _id: Id) -> Element<'_, Message> {
+        if !self.has_active_media() {
+            return self.core.applet.popup_container(text("")).into();
+        }
+
         let size = self.core.applet.suggested_size(true);
         let pad = self.core.applet.suggested_padding(true);
         let transport_icon = match self.playback_state {
@@ -424,5 +436,13 @@ impl cosmic::Application for Window {
 
         // Set the widget content list as the popup_container for the applet
         self.core.applet.popup_container(content_list).into()
-    }  
+    }
+}
+
+impl Window {
+    fn has_active_media(&self) -> bool {
+        !(self.playback_state == PlaybackState::Stopped
+            && self.now_playing_title == "Nothing playing"
+            && self.now_playing_artist.is_empty())
+    }
 }
