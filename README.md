@@ -38,11 +38,6 @@ sudo cp resources/app.desktop /usr/share/applications/cosmic-now-playing.desktop
 
 Then add the applet from COSMIC panel settings.
 
-## Notes
-
-- This is an early project and API details may change.
-- Current app ID constant is `com.example.BasicApplet` and should be replaced before packaging/distribution.
-
 ## Feedback
 
 Feedback is very welcome.
