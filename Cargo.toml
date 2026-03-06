@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 mpris = "2.0"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic.git"

@@ -1,9 +1,12 @@
 // Mandatory COSMIC imports
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use cosmic::app::Core;
 use cosmic::iced::{
+    Background,
+    Color,
     ContentFit,
     platform_specific::shell::commands::popup::{destroy_popup, get_popup},
     stream::channel,
@@ -18,7 +21,7 @@ use cosmic::iced_runtime::core::window;
 use cosmic::{Action, Element, Task};
 
 // Widgets we're going to use
-use cosmic::widget::{button, column, icon, text, Row};
+use cosmic::widget::{button, button::Catalog, column, icon, text, Row};
 
 use crate::metadata::{now_playing_from_player, now_playing_snapshot, NowPlayingData};
 use crate::player::{album_art_path_from_metadata, playback_state_from_player, with_active_player};
@@ -45,6 +48,7 @@ pub struct Window {
     now_playing_artist: String,
     playback_state: PlaybackState,
     album_art_path: Option<PathBuf>,
+    album_color: Option<Color>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -103,6 +107,7 @@ impl cosmic::Application for Window {
             now_playing_title: initial.title,
             now_playing_artist: initial.artist,
             playback_state: initial.state,
+            album_color: dominant_album_color(initial.album_art_path.as_ref()),
             album_art_path: initial.album_art_path,
             ..Default::default()  // Set everything else to the default values
         };
@@ -159,6 +164,7 @@ impl cosmic::Application for Window {
                 self.now_playing_title = data.title;
                 self.now_playing_artist = data.artist;
                 self.playback_state = data.state;
+                self.album_color = dominant_album_color(data.album_art_path.as_ref());
                 self.album_art_path = data.album_art_path;
             }
             Message::PreviousTrack => {
@@ -346,9 +352,28 @@ impl cosmic::Application for Window {
                     .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1))),
             );
 
+        let album_color = self.album_color;
         let content = button::custom(row_content)
             .width(Length::Shrink)
             .height(Length::Shrink)
+            .class(cosmic::theme::Button::Custom {
+                active: Box::new(move |focused, theme| {
+                    let base = theme.active(focused, false, &cosmic::theme::Button::AppletIcon);
+                    style_with_optional_album_color(base, album_color)
+                }),
+                disabled: Box::new(move |theme| {
+                    let base = theme.disabled(&cosmic::theme::Button::AppletIcon);
+                    style_with_optional_album_color(base, album_color)
+                }),
+                hovered: Box::new(move |focused, theme| {
+                    let base = theme.hovered(focused, false, &cosmic::theme::Button::AppletIcon);
+                    style_with_optional_album_color(base, album_color.map(|c| shift_color(c, 0.07)))
+                }),
+                pressed: Box::new(move |focused, theme| {
+                    let base = theme.pressed(focused, false, &cosmic::theme::Button::AppletIcon);
+                    style_with_optional_album_color(base, album_color.map(|c| shift_color(c, -0.08)))
+                }),
+            })
             .on_press(Message::TogglePopup);
 
         self.core
@@ -445,4 +470,92 @@ impl Window {
             && self.now_playing_title == "Nothing playing"
             && self.now_playing_artist.is_empty())
     }
+}
+
+fn style_with_optional_album_color(mut base: button::Style, color: Option<Color>) -> button::Style {
+    if let Some(album) = color {
+        let theme_base = match base.background {
+            Some(Background::Color(c)) => c,
+            _ => Color::from_rgb8(36, 38, 42),
+        };
+
+        let mixed = blend_color(theme_base, album, 0.36);
+        let background = with_alpha(mixed, 0.64);
+        let border = with_alpha(shift_color(album, -0.05), 0.82);
+
+        let foreground = contrast_text_color(background);
+        base.background = Some(Background::Color(background));
+        base.border_width = base.border_width.max(1.0);
+        base.border_color = border;
+        base.text_color = Some(foreground);
+        base.icon_color = Some(foreground);
+    }
+    base
+}
+
+fn with_alpha(mut color: Color, alpha: f32) -> Color {
+    color.a = alpha.clamp(0.0, 1.0);
+    color
+}
+
+fn blend_color(a: Color, b: Color, ratio: f32) -> Color {
+    let t = ratio.clamp(0.0, 1.0);
+    let inv = 1.0 - t;
+    Color {
+        r: (a.r * inv) + (b.r * t),
+        g: (a.g * inv) + (b.g * t),
+        b: (a.b * inv) + (b.b * t),
+        a: (a.a * inv) + (b.a * t),
+    }
+}
+
+fn contrast_text_color(background: Color) -> Color {
+    let luminance = 0.2126 * background.r + 0.7152 * background.g + 0.0722 * background.b;
+    if luminance > 0.58 {
+        Color::from_rgb8(17, 17, 17)
+    } else {
+        Color::WHITE
+    }
+}
+
+fn shift_color(color: Color, amount: f32) -> Color {
+    let adjust = |channel: f32| (channel + amount).clamp(0.0, 1.0);
+    Color {
+        r: adjust(color.r),
+        g: adjust(color.g),
+        b: adjust(color.b),
+        a: color.a,
+    }
+}
+
+fn dominant_album_color(path: Option<&PathBuf>) -> Option<Color> {
+    let path = path?;
+    let image = image::open(path).ok()?.to_rgba8();
+    let thumb = image::imageops::thumbnail(&image, 64, 64);
+
+    let mut buckets: HashMap<u16, (u32, u64, u64, u64)> = HashMap::new();
+    for pixel in thumb.pixels() {
+        let [r, g, b, a] = pixel.0;
+        if a < 24 {
+            continue;
+        }
+
+        // Group into coarse RGB buckets so we pick the most frequent color family.
+        let key = ((u16::from(r >> 4)) << 8) | ((u16::from(g >> 4)) << 4) | u16::from(b >> 4);
+        let entry = buckets.entry(key).or_insert((0, 0, 0, 0));
+        entry.0 += 1;
+        entry.1 += u64::from(r);
+        entry.2 += u64::from(g);
+        entry.3 += u64::from(b);
+    }
+
+    let (_, (count, sum_r, sum_g, sum_b)) = buckets.into_iter().max_by_key(|(_, (count, ..))| *count)?;
+    if count == 0 {
+        return None;
+    }
+
+    let r = (sum_r / u64::from(count)) as u8;
+    let g = (sum_g / u64::from(count)) as u8;
+    let b = (sum_b / u64::from(count)) as u8;
+    Some(Color::from_rgb8(r, g, b))
 }

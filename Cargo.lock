@@ -884,6 +884,7 @@ dependencies = [
 name = "cosmic-now-playing"
 version = "0.1.0"
 dependencies = [
+ "image",
  "libcosmic",
  "mpris",
 ]
