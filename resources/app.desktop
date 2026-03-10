@@ -2,7 +2,7 @@
 Name=Now Playing
 Comment=Display currently playing media
 Type=Application
-Exec=/usr/bin/cosmic-ext-now-playing
+Exec=/usr/bin/cosmic-ext-applet-now-playing
 Icon=multimedia-player-symbolic
 Terminal=false
 Categories=COSMIC;

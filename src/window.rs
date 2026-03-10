@@ -27,7 +27,7 @@ use crate::metadata::{now_playing_from_player, now_playing_snapshot, NowPlayingD
 use crate::player::{album_art_path_from_metadata, playback_state_from_player, with_active_player};
 
 // Every COSMIC Application and Applet MUST have an ID
-const ID: &str = "com.example.BasicApplet";
+const ID: &str = "com.github.DiegoMMR.CosmicExtAppletNowPlaying";
 
 /*
 *  Every COSMIC model must be a struct data type.

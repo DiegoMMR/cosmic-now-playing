@@ -1,4 +1,4 @@
-# cosmic-ext-now-playing
+# cosmic-ext-applet-now-playing
 
 A small COSMIC panel applet that shows what is currently playing via MPRIS.
 
@@ -32,8 +32,8 @@ Example:
 
 ```bash
 cargo build --release
-sudo cp target/release/cosmic-ext-now-playing /usr/bin/cosmic-ext-now-playing
-sudo cp resources/app.desktop /usr/share/applications/cosmic-ext-now-playing.desktop
+sudo cp target/release/cosmic-ext-applet-now-playing /usr/bin/cosmic-ext-applet-now-playing
+sudo cp resources/app.desktop /usr/share/applications/cosmic-ext-applet-now-playing.desktop
 ```
 
 Then add the applet from COSMIC panel settings.
